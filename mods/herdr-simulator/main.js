@@ -17,7 +17,7 @@ import { SDK, startAndroid, serialOf } from "./android.js";
 // can't learn its own id, so it takes the lowest free pane-N. Slots are reused
 // rather than made unique because Herdr never evicts an image path it loaded.
 const RING = 12;
-const frameFiles = (set) => Array.from({ length: RING }, (_, i) => `mods/herdr-emulator-screen/${set}-${i}.jpg`);
+const frameFiles = (set) => Array.from({ length: RING }, (_, i) => `mods/herdr-simulator-screen/${set}-${i}.jpg`);
 const RELOAD_MS = 120;
 // ~30 fps, as smooth as a swipe needs; each file in the ring holds a decoded
 // full-size frame (~12 MB). Writes catch up by at most one FRAME_MS, so a file
@@ -27,11 +27,11 @@ const FRAME_MS = 20;
 // The device each view shows, by view, and the last one picked anywhere. A
 // view with no choice of its own keeps the one last picked when it opened, so
 // a pick in another view doesn't move it; else it shows the first booted one.
-const CHOICES = "herdr-emulator.devices";
-const LAST_PICKED = "herdr-emulator.device";
+const CHOICES = "herdr-simulator.devices";
+const LAST_PICKED = "herdr-simulator.device";
 // Slots taken by open panes. globalThis is shared by every copy and starts
 // empty when Herdr does.
-const panes = (globalThis.__herdrEmulatorPanes ??= new Set());
+const panes = (globalThis.__herdrSimulatorPanes ??= new Set());
 
 function findNode(node, id) {
   if (node?.id === id) return node;
@@ -57,7 +57,7 @@ const TOOLBAR = 28;
 const BEZEL = 5;
 const PAD = 8;
 const GAP = 8;
-const ICONS = "mods/herdr-emulator/icons";
+const ICONS = "mods/herdr-simulator/icons";
 // Pixels per line, for a wheel that reports lines.
 const LINE = 20;
 // The HID consumer page, where volume up is 233 and down 234.
@@ -282,7 +282,7 @@ export default class Simulator extends View {
     if (this.view !== "panel") return false;
     const root = layout();
     const panel = findNode(root, "panel");
-    return !panel || panel.hidden || findNode(root, "panel-body")?.active !== "herdr-emulator";
+    return !panel || panel.hidden || findNode(root, "panel-body")?.active !== "herdr-simulator";
   }
 
   async run(cx) {
@@ -622,7 +622,7 @@ export default class Simulator extends View {
       : v_flex().w(screenW).h(screenH).rounded(radius).bg("#000000").items_center().justify_center().p(24)
           .child(div().text_size(12).text_color(t.dim).child(note));
 
-    return v_flex().id("herdr-emulator").relative().size_full().p(PAD).gap(GAP)
+    return v_flex().id("herdr-simulator").relative().size_full().p(PAD).gap(GAP)
       .track_focus(this.focus)
       .on_key_down((e, cx) => this.keyDown(e, cx))
       .on_key_up((e, cx) => this.keyUp(e, cx))

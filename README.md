@@ -1,8 +1,8 @@
-# Herdr Emulator
+# Herdr Simulator
 
 Your iOS simulator and Android emulator, live inside [Herdr](https://herdr.dev), next to your code and terminals. Android works on Linux and macOS; iOS needs macOS.
 
-![Herdr Emulator: a test file, its passing run, and the iPhone simulator showing the result](preview.png)
+![Herdr Simulator: a test file, its passing run, and the iPhone simulator showing the result](preview.png)
 
 Pick any simulator or emulator on your machine and use it right in Herdr. Run your mobile tests and watch them tap through the app while the results print beside it.
 
@@ -23,21 +23,21 @@ This is a fork of [wobsoriano/herdr-sim](https://github.com/wobsoriano/herdr-sim
 
 ## Install
 
-Ask your Herdr agent to "add the layout at github.com/alok-debnath/herdr-emulator".
+Ask your Herdr agent to "add the layout at github.com/alok-debnath/herdr-simulator".
 
 Or by hand:
 
 ```sh
-git clone https://github.com/alok-debnath/herdr-emulator
-cd herdr-emulator
-cp -R mods/herdr-emulator mods/herdr-emulator-screen mods/tabs-herdr-emulator ~/.config/herdr-app/mods/
-cp layouts/herdr-emulator.json ~/.config/herdr-app/layouts/
-herdr-app do layout.switch --name herdr-emulator
+git clone https://github.com/alok-debnath/herdr-simulator
+cd herdr-simulator
+cp -R mods/herdr-simulator mods/herdr-simulator-screen mods/tabs-herdr-simulator ~/.config/herdr-app/mods/
+cp layouts/herdr-simulator.json ~/.config/herdr-app/layouts/
+herdr-app do layout.switch --name herdr-simulator
 ```
 
-Then add the two shortcuts in [keys.json](keys.json) to `~/.config/herdr-app/keys.json`. In Herdr, the layout and the mod are both named `herdr-emulator`.
+Then add the two shortcuts in [keys.json](keys.json) to `~/.config/herdr-app/keys.json`. In Herdr, the layout and the mod are both named `herdr-simulator`.
 
-If you only want the pane, copy `mods/herdr-emulator` and `mods/herdr-emulator-screen` and skip the rest. To add the Simulator to a layout of your own, put the `herdr-emulator` block from `layouts/herdr-emulator.json` in its `panel-body` stack and use `tabs-herdr-emulator` for its tab bar.
+If you only want the pane, copy `mods/herdr-simulator` and `mods/herdr-simulator-screen` and skip the rest. To add the Simulator to a layout of your own, put the `herdr-simulator` block from `layouts/herdr-simulator.json` in its `panel-body` stack and use `tabs-herdr-simulator` for its tab bar.
 
 Install by copying, not by linking: Herdr loads a linked mod's code but not its icons.
 
@@ -50,21 +50,21 @@ Install by copying, not by linking: Herdr loads a linked mod's code but not its 
 
 ### From the tab bar
 
-Switch to the `herdr-emulator` layout. Click **Simulator** next to Files and Changes, or press ⌘⇧S (Super+Shift+S on Linux). Click it again to close the panel. Each space remembers whether the panel was open.
+Switch to the `herdr-simulator` layout. Click **Simulator** next to Files and Changes, or press ⌘⇧S (Super+Shift+S on Linux). Click it again to close the panel. Each space remembers whether the panel was open.
 
 ### As a pane
 
 In any other layout, press ⌘⇧S, or run:
 
 ```sh
-herdr-app do pane.split --direction right --mod herdr-emulator
+herdr-app do pane.split --direction right --mod herdr-simulator
 ```
 
 Close it like any other pane.
 
 ## What it runs on your machine
 
-Herdr Emulator sends nothing over the internet itself.
+Herdr Simulator sends nothing over the internet itself.
 
 - For iOS it runs Xcode's simulator tools and [serve-sim](https://github.com/EvanBacon/serve-sim), which downloads from npm the first time.
 - For Android it runs `adb` and the emulator from your Android SDK, plus a small helper that comes with the mod. The helper reads the emulator's screen over its local gRPC port and serves it on `127.0.0.1`.
@@ -94,4 +94,4 @@ Changes from [wobsoriano/herdr-sim](https://github.com/wobsoriano/herdr-sim):
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The tab bar in `mods/tabs-herdr-emulator` is adapted from Herdr's own and keeps Herdr's Apache-2.0 license, in `mods/tabs-herdr-emulator/LICENSE`. The icons are from [Lucide](https://lucide.dev) under the ISC license, except the Android icon and the two phone icons for Rotate, which were drawn for this mod in Lucide's style.
+MIT, see [LICENSE](LICENSE). The tab bar in `mods/tabs-herdr-simulator` is adapted from Herdr's own and keeps Herdr's Apache-2.0 license, in `mods/tabs-herdr-simulator/LICENSE`. The icons are from [Lucide](https://lucide.dev) under the ISC license, except the Android icon and the two phone icons for Rotate, which were drawn for this mod in Lucide's style.

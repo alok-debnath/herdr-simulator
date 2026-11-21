@@ -1,8 +1,8 @@
 {
   "global": {
-    "cmd-shift-s": { "command": "pane.split", "args": { "direction": "right", "mod": "herdr-emulator" } }
+    "cmd-shift-s": { "command": "pane.split", "args": { "direction": "right", "mod": "herdr-simulator" } }
   },
-  "layout:herdr-emulator": {
-    "cmd-shift-s": "tabs-herdr-emulator.herdr-emulator"
+  "layout:herdr-simulator": {
+    "cmd-shift-s": "tabs-herdr-simulator.herdr-simulator"
   }
 }

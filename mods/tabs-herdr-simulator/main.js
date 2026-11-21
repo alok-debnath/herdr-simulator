@@ -1,7 +1,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
 // Herdr's shipped `tabs` mod (0.1.16, Apache-2.0, see LICENSE here), with a Simulator button
-// after Changes, the herdr-emulator panel among the enabled panels, and togglePanel() for its key.
+// after Changes, the herdr-simulator panel among the enabled panels, and togglePanel() for its key.
 import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings, nextCommand } from "herdr";
 
 function find(node, id) {
@@ -32,7 +32,7 @@ function label(tab, lead) {
 export default class Tabs extends View {
   init(_props, cx) {
     this.pressed = null;
-    // Keys open a panel as its button does: "cmd-shift-s": "tabs-herdr-emulator.herdr-emulator" in keys.json.
+    // Keys open a panel as its button does: "cmd-shift-s": "tabs-herdr-simulator.herdr-simulator" in keys.json.
     cx.spawn(async (cx) => { for (;;) { this.togglePanel(await nextCommand()); cx.notify(); } });
     this.scroll = ScrollHandle.new();
     try { this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}"); } catch { this.panels = {}; }
@@ -140,7 +140,7 @@ export default class Tabs extends View {
       ? Math.max(10, (root.traffic_lights[0] + 64) / settings().zoom - (sidebar?.hidden ? 0 : sidebar?.size?.px ?? 0))
       : 10;
     const panel = find(root, "panel"), body = find(root, "panel-body");
-    const enabled = [...(shared("workspace.panels") ?? ["files", "changes"]), "herdr-emulator"];
+    const enabled = [...(shared("workspace.panels") ?? ["files", "changes"]), "herdr-simulator"];
     this.syncPanel(space, panel, body, enabled);
     const panelButton = (id, label, icon) => {
       const on = panel && !panel.hidden && body?.active === id;
@@ -158,9 +158,9 @@ export default class Tabs extends View {
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
-      .child(panelButton("herdr-emulator", "Simulator", "mods/herdr-emulator/icons/smartphone.svg"))
-      .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs-herdr-emulator/win-min.svg").size(16) : "−", () => run("window.minimize")))
-        .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs-herdr-emulator/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
-        .child(button("close-window", w.platform === "windows" ? svg("mods/tabs-herdr-emulator/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))));
+      .child(panelButton("herdr-simulator", "Simulator", "mods/herdr-simulator/icons/smartphone.svg"))
+      .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs-herdr-simulator/win-min.svg").size(16) : "−", () => run("window.minimize")))
+        .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs-herdr-simulator/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
+        .child(button("close-window", w.platform === "windows" ? svg("mods/tabs-herdr-simulator/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))));
   }
 }

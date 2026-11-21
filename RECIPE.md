@@ -1,4 +1,4 @@
-# Herdr Emulator
+# Herdr Simulator
 
 Herdr's main window with a live phone in it: a **Simulator** button after Files
 and Changes opens the picked iOS simulator or Android emulator in the
@@ -6,7 +6,7 @@ right-hand panel, where the person taps, swipes and types on it while their
 code and tests run beside it. The same view opens as a pane in any layout.
 Android works on Linux and macOS; iOS needs macOS.
 
-![Herdr Emulator](preview.png)
+![Herdr Simulator](preview.png)
 
 ## What you see
 
@@ -14,7 +14,7 @@ Android works on Linux and macOS; iOS needs macOS.
   bar), with one more button in the tab bar: **Simulator**, a 14px
   `smartphone` icon and the label, after Files and Changes, styled like them
   (26px tall, 6px radius, `selected` background while its panel shows).
-- **The panel** (410px wide by default, 280 to 900px) shows the `herdr-emulator`
+- **The panel** (410px wide by default, 280 to 900px) shows the `herdr-simulator`
   view, top to bottom, with 8px padding and an 8px gap:
   - **One 32px row**: at the left a 26px **Stop** button (14px `power` icon,
     `ansi1` red on hover), then the **device selector** filling the row (32px
@@ -59,10 +59,10 @@ Android works on Linux and macOS; iOS needs macOS.
 
 ## How it behaves
 
-- **Simulator button / ⌘⇧S** (in the `herdr-emulator` layout): opens the panel on
-  `herdr-emulator`, or closes it when it already shows it. Like Files and Changes, the
+- **Simulator button / ⌘⇧S** (in the `herdr-simulator` layout): opens the panel on
+  `herdr-simulator`, or closes it when it already shows it. Like Files and Changes, the
   panel's state is remembered per space.
-- **⌘⇧S in any other layout** splits the focused pane with a `herdr-emulator` pane.
+- **⌘⇧S in any other layout** splits the focused pane with a `herdr-simulator` pane.
   (`cmd` is Super on Linux.)
 - **While the panel is closed** or showing Files or Changes, its view stops
   streaming and picks up within a second of showing again. Panes always
@@ -97,16 +97,16 @@ Android works on Linux and macOS; iOS needs macOS.
 
 ## Built from
 
-- **Layout** `layouts/herdr-emulator.json`: a clone of Herdr 0.1.16's `main`.
-  `tabs` uses `tabs-herdr-emulator`; the `panel` column is 410px; the `panel-body`
-  stack holds `files`, `changes` and a third block `{ "id": "herdr-emulator",
-  "content": { "mod": "herdr-emulator", "props": { "frames": "panel" } } }`.
-- **`mods/tabs-herdr-emulator`**: Herdr 0.1.16's `tabs` mod cloned (`mod.clone`),
-  with `nextCommand` imported, `"herdr-emulator"` appended to the enabled panels,
+- **Layout** `layouts/herdr-simulator.json`: a clone of Herdr 0.1.16's `main`.
+  `tabs` uses `tabs-herdr-simulator`; the `panel` column is 410px; the `panel-body`
+  stack holds `files`, `changes` and a third block `{ "id": "herdr-simulator",
+  "content": { "mod": "herdr-simulator", "props": { "frames": "panel" } } }`.
+- **`mods/tabs-herdr-simulator`**: Herdr 0.1.16's `tabs` mod cloned (`mod.clone`),
+  with `nextCommand` imported, `"herdr-simulator"` appended to the enabled panels,
   the Simulator `panelButton` after Changes, and a `togglePanel(id)` the
   buttons and a `nextCommand()` loop started in `init` share (so
-  `"tabs-herdr-emulator.herdr-emulator"` in `keys.json` toggles it).
-- **`mods/herdr-emulator`** (`"focusable": true`): `main.js` (picker, session loop,
+  `"tabs-herdr-simulator.herdr-simulator"` in `keys.json` toggles it).
+- **`mods/herdr-simulator`** (`"focusable": true`): `main.js` (picker, session loop,
   frame ring, input, render), `serve-sim.js` (iOS), `android.js` (Android input,
   rotation, volume and helper start), `android-stream.mjs` (the Android frame
   helper), `icons/`.
@@ -153,12 +153,12 @@ Android works on Linux and macOS; iOS needs macOS.
   - **Views**: the panel is `props.frames` (`"panel"`); a pane claims the
     lowest free `pane-N` from a `Set` on `globalThis` (shared by every copy,
     empty when Herdr starts) and frees it in `close()`. Choices live in shared
-    `herdr-emulator.devices` keyed by view, plus `herdr-emulator.device` for the last pick.
+    `herdr-simulator.devices` keyed by view, plus `herdr-simulator.device` for the last pick.
   - **Frames on screen**: each frame is written to the next of 12 files in
-    `mods/herdr-emulator-screen/<view>-<n>.jpg` and moved to the top of a stack of
+    `mods/herdr-simulator-screen/<view>-<n>.jpg` and moved to the top of a stack of
     12 absolutely placed `image()`s 120 ms later (`RELOAD_MS`); at most one
     write per 20 ms (`FRAME_MS`) on a due-time schedule.
-- **`mods/herdr-emulator-screen`**: an empty mod (`main.js` renders a `div()`) whose
+- **`mods/herdr-simulator-screen`**: an empty mod (`main.js` renders a `div()`) whose
   folder holds the frames.
 - Herdr functions: `exec`, `net.connect`, `writeFile`, `appHome`, `shared` /
   `setShared`, `props`, `nextCommand`, `theme`, `layout`, `window`, `run`
@@ -217,7 +217,7 @@ Android works on Linux and macOS; iOS needs macOS.
 
 ## Done when
 
-- The `herdr-emulator` layout shows a Simulator button after Changes; clicking it opens
+- The `herdr-simulator` layout shows a Simulator button after Changes; clicking it opens
   the panel with the device streaming, and clicking again closes it.
 - On Linux, with Herdr started without `ANDROID_HOME`, the picker lists the
   Android emulators and a running one streams.
@@ -235,7 +235,7 @@ Android works on Linux and macOS; iOS needs macOS.
 - The picker lists iOS (on macOS) and Android devices under their headings;
   picking the other platform switches the stream within a few seconds, and an
   Android helper process exits a few seconds after the view leaves it.
-- `herdr-app do pane.split --direction right --mod herdr-emulator` opens the same view
+- `herdr-app do pane.split --direction right --mod herdr-simulator` opens the same view
   in a layout without the panel, while the panel shows too, both live.
 - Two panes can show an iPhone and an Android emulator at once, and picking in
   one leaves the other.

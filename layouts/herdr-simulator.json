@@ -79,7 +79,7 @@
           "id": "tabs",
           "type": "block",
           "content": {
-            "mod": "tabs-herdr-emulator"
+            "mod": "tabs-herdr-simulator"
           },
           "size": {
             "px": 42
@@ -142,10 +142,10 @@
                       }
                     },
                     {
-                      "id": "herdr-emulator",
+                      "id": "herdr-simulator",
                       "type": "block",
                       "content": {
-                        "mod": "herdr-emulator",
+                        "mod": "herdr-simulator",
                         "props": {
                           "frames": "panel"
                         }
