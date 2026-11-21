@@ -2,7 +2,7 @@
 
 Your iOS simulator and Android emulator, live inside [Herdr](https://herdr.dev), next to your code and terminals. Android works on Linux and macOS; iOS needs macOS.
 
-![Herdr Simulator: a test file, its passing run, and the iPhone simulator showing the result](preview.png)
+![Herdr Simulator: the mod's rotate code, adb output, and an Android emulator streaming in the side panel](preview.png)
 
 Pick any simulator or emulator on your machine and use it right in Herdr. Run your mobile tests and watch them tap through the app while the results print beside it.
 
