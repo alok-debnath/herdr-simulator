@@ -6,19 +6,27 @@
 // whenever the screen changes (~36 fps at 540 wide, against ~6 fps for adb
 // screencap). One gRPC stream feeds every viewer; the helper exits a few
 // seconds after the last one leaves, or when the emulator goes away.
-import http from "node:http";
+import net from "node:net";
 import http2 from "node:http2";
 import { readFileSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir, userInfo } from "node:os";
 
 const [, , consolePort, listenPort, width = "540"] = process.argv;
 const IDLE_MS = 3000;
 
 // The emulator advertises its gRPC port and token in a discovery file per instance.
 function discover() {
-  const dir = `${homedir()}/Library/Caches/TemporaryItems/avd/running`;
-  for (const name of readdirSync(dir).filter((f) => f.endsWith(".ini"))) {
-    const ini = readFileSync(`${dir}/${name}`, "utf8");
+  const dirs = [
+    `${homedir()}/Library/Caches/TemporaryItems/avd/running`,
+    process.env.XDG_RUNTIME_DIR && `${process.env.XDG_RUNTIME_DIR}/avd/running`,
+    `/run/user/${userInfo().uid}/avd/running`,
+    `${tmpdir()}/android-${userInfo().username}/avd/running`,
+  ].filter(Boolean);
+  const files = dirs.flatMap((dir) => {
+    try { return readdirSync(dir).filter((f) => f.endsWith(".ini")).map((f) => `${dir}/${f}`); } catch { return []; }
+  });
+  for (const file of files) {
+    const ini = readFileSync(file, "utf8");
     const get = (k) => new RegExp(`^${k}=(.*)$`, "m").exec(ini)?.[1];
     if (get("port.serial") === consolePort) return { port: get("grpc.port"), token: get("grpc.token") };
   }
@@ -67,8 +75,10 @@ const stopSoon = () => { idle ??= setTimeout(() => process.exit(0), IDLE_MS); };
 const { port, token } = discover();
 const grpc = http2.connect(`http://127.0.0.1:${port}`);
 grpc.on("error", () => process.exit(1));
-// ImageFormat { format: PNG, width, height }: the frame fits inside width x height.
-const format = [8, 0, 24, ...varint(Number(width)), 32, ...varint(Number(width) * 4)];
+// ImageFormat { format: PNG, width, height }: the frame fits inside width x height. A square
+// box keeps the short side at `width` both ways up: 540x1200 in portrait, 1200x540 in landscape.
+const box = Math.round((Number(width) * 20) / 9);
+const format = [8, 0, 24, ...varint(box), 32, ...varint(box)];
 const call = grpc.request({
   ":method": "POST",
   ":path": "/android.emulation.control.EmulatorController/streamScreenshot",
@@ -93,25 +103,37 @@ call.on("data", (chunk) => {
     pending = pending.subarray(5 + len);
     // An inactive display sends empty images.
     if (!png?.length) continue;
+    // A still screen keeps sending the same picture: skip it, so nothing downstream
+    // writes, reloads or redraws a frame that didn't change.
+    if (last?.equals(png)) continue;
     last = Buffer.from(png);
-    for (const res of viewers) send(res, last);
+    for (const socket of viewers) send(socket, last);
   }
 });
 
-function send(res, png) {
-  res.write(`--frame\r\nContent-Type: image/png\r\nContent-Length: ${png.length}\r\n\r\n`);
-  res.write(png);
-  res.write("\r\n");
+// One write per frame. A viewer that can't keep up skips frames instead of
+// queueing them, so it always gets the newest picture.
+function send(socket, png) {
+  if (socket.writableLength > 0) return;
+  socket.write(Buffer.concat([Buffer.from(`--frame\r\nContent-Type: image/png\r\nContent-Length: ${png.length}\r\n\r\n`), png, Buffer.from("\r\n")]));
 }
 
-http.createServer((req, res) => {
-  res.writeHead(200, { "content-type": "multipart/x-mixed-replace; boundary=frame", "cache-control": "no-store" });
-  viewers.add(res);
-  if (last) send(res, last);
-  clearTimeout(idle);
-  idle = null;
-  res.on("close", () => {
-    viewers.delete(res);
+// Raw sockets, not node:http: http's chunked transfer encoding puts chunk sizes
+// between the bytes, and the mod reads the multipart body as it comes.
+const HEAD = "HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n";
+net.createServer((socket) => {
+  socket.setNoDelay(true);
+  socket.on("error", () => socket.destroy());
+  // Answer once the request has arrived; its contents don't matter.
+  socket.once("data", () => {
+    socket.write(HEAD);
+    viewers.add(socket);
+    if (last) send(socket, last);
+    clearTimeout(idle);
+    idle = null;
+  });
+  socket.on("close", () => {
+    viewers.delete(socket);
     if (!viewers.size) stopSoon();
   });
 }).listen(Number(listenPort), "127.0.0.1", stopSoon);

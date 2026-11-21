@@ -2,7 +2,7 @@
   "id": "root",
   "cloned_from": {
     "name": "main",
-    "version": "0.1.13"
+    "version": "0.1.16"
   },
   "type": "row",
   "children": [
@@ -79,7 +79,7 @@
           "id": "tabs",
           "type": "block",
           "content": {
-            "mod": "tabs-herdr-sim"
+            "mod": "tabs-herdr-emulator"
           },
           "size": {
             "px": 42
@@ -142,10 +142,10 @@
                       }
                     },
                     {
-                      "id": "herdr-sim",
+                      "id": "herdr-emulator",
                       "type": "block",
                       "content": {
-                        "mod": "herdr-sim",
+                        "mod": "herdr-emulator",
                         "props": {
                           "frames": "panel"
                         }
@@ -156,7 +156,7 @@
                 }
               ],
               "size": {
-                "px": 368
+                "px": 410
               },
               "min": 280,
               "max": 900,

@@ -1,10 +1,10 @@
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { exec, theme, appHome, shared, setShared, nextCommand, props, layout } from "herdr";
+import { exec, theme, appHome, shared, setShared, nextCommand, props, layout, window } from "herdr";
 import net from "net";
 import { writeFile } from "fs/promises";
 import { serveSim, startHelper, keyUsages, touchEdge } from "./serve-sim.js";
-import { SDK, startAndroid } from "./android.js";
+import { SDK, startAndroid, serialOf } from "./android.js";
 
 // Frames (serve-sim's MJPEG on iOS, android-stream.mjs's PNGs on Android) go to another mod's folder. Herdr refreshes
 // images under mods/ when they change, but a write inside this mod's own
@@ -17,21 +17,21 @@ import { SDK, startAndroid } from "./android.js";
 // can't learn its own id, so it takes the lowest free pane-N. Slots are reused
 // rather than made unique because Herdr never evicts an image path it loaded.
 const RING = 12;
-const frameFiles = (set) => Array.from({ length: RING }, (_, i) => `mods/herdr-sim-screen/${set}-${i}.jpg`);
-const RELOAD_MS = 200;
+const frameFiles = (set) => Array.from({ length: RING }, (_, i) => `mods/herdr-emulator-screen/${set}-${i}.jpg`);
+const RELOAD_MS = 120;
 // ~30 fps, as smooth as a swipe needs; each file in the ring holds a decoded
 // full-size frame (~12 MB). Writes catch up by at most one FRAME_MS, so a file
 // is rewritten (RING - 1) * FRAME_MS after its last write at the soonest, well
 // after it stopped being on show.
-const FRAME_MS = 33;
+const FRAME_MS = 20;
 // The device each view shows, by view, and the last one picked anywhere. A
 // view with no choice of its own keeps the one last picked when it opened, so
 // a pick in another view doesn't move it; else it shows the first booted one.
-const CHOICES = "herdr-sim.devices";
-const LAST_PICKED = "herdr-sim.device";
+const CHOICES = "herdr-emulator.devices";
+const LAST_PICKED = "herdr-emulator.device";
 // Slots taken by open panes. globalThis is shared by every copy and starts
 // empty when Herdr does.
-const panes = (globalThis.__herdrSimPanes ??= new Set());
+const panes = (globalThis.__herdrEmulatorPanes ??= new Set());
 
 function findNode(node, id) {
   if (node?.id === id) return node;
@@ -50,11 +50,14 @@ function claimPaneSlot() {
     }
   }
 }
-const HEADER = 44;
+// One 32px row (device picker and buttons) over the phone, with thin padding and bezel,
+// so the screen gets as much of the panel as it can.
+const ROW = 32;
 const TOOLBAR = 28;
-const BEZEL = 10;
-const PAD = 12;
-const ICONS = "mods/herdr-sim/icons";
+const BEZEL = 5;
+const PAD = 8;
+const GAP = 8;
+const ICONS = "mods/herdr-emulator/icons";
 // Pixels per line, for a wheel that reports lines.
 const LINE = 20;
 // The HID consumer page, where volume up is 233 and down 234.
@@ -63,8 +66,9 @@ const CONSUMER = 12;
 const BUTTONS = [
   { id: "home", icon: "house", tip: "Home", press: (input) => input.button("home") },
   { id: "lock", icon: "lock", tip: "Lock", press: (input) => input.button("lock") },
-  { id: "volume-down", icon: "volume-1", tip: "Volume down", press: (input) => input.hid(CONSUMER, 234) },
-  { id: "volume-up", icon: "volume-2", tip: "Volume up", press: (input) => input.hid(CONSUMER, 233) },
+  // One button for both volume keys: click or scroll up raises, right-click or scroll down lowers.
+  { id: "volume", icon: "volume-2", tip: "click or scroll up to raise, right-click or scroll down to lower",
+    press: (input) => input.hid(CONSUMER, 233), lower: (input) => input.hid(CONSUMER, 234) },
   { id: "rotate", icon: "rotate-ccw", tip: "Rotate", press: (input) => input.rotate() },
   { id: "keyboard", icon: "keyboard", tip: "Show or hide the software keyboard", press: (input) => input.softwareKeyboard(), only: "ios" },
 ];
@@ -118,7 +122,7 @@ async function listEmulators() {
   return lines.filter(([kind]) => kind === "avd").map(([, name, abi, api]) => ({
     platform: "android", id: `avd:${name}`, avd: name, name: name.replaceAll("_", " "),
     os: api ? `Android API ${api}` : "Android", booted: running.has(name),
-    unusable: abi && !abi.startsWith(host) ? `${abi} image, can't run on this Mac` : null,
+    unusable: abi && !abi.startsWith(host) ? `${abi} image, can't run on this machine` : null,
   }));
 }
 
@@ -127,15 +131,22 @@ async function listEmulators() {
 const PLATFORMS = [
   { id: "android", label: "Android", icon: "android", list: listEmulators,
     boot: (d) => exec("sh", ["-c", `${SDK}; nohup "$sdk/emulator/emulator" -avd "$1" -no-window -no-audio >/dev/null 2>&1 &`, "sh", d.avd]),
+    // The emulator's console kill shuts it down cleanly, as closing its window would.
+    stop: async (d) => {
+      const serial = await serialOf(d.avd);
+      if (serial) await exec("sh", ["-c", `${SDK}; exec "$sdk/platform-tools/adb" -s "$1" emu kill`, "sh", serial]);
+    },
     start: startAndroid },
   { id: "ios", label: "iOS", icon: "apple", list: listSimulators,
     boot: (d) => exec("xcrun", ["simctl", "boot", d.id]),
+    stop: (d) => exec("xcrun", ["simctl", "shutdown", d.id]),
     start: startHelper },
 ];
 const platformOf = (d) => PLATFORMS.find((p) => p.id === d.platform);
 
 async function listDevices() {
-  return (await Promise.all(PLATFORMS.map((p) => p.list()))).flat();
+  const macos = window()?.platform === "macos";
+  return (await Promise.all(PLATFORMS.filter((p) => macos || p.id !== "ios").map((p) => p.list()))).flat();
 }
 
 function headerEnd(buf, len) {
@@ -173,6 +184,8 @@ export default class Simulator extends View {
     this.devices = [];
     this.picking = false;
     this.booting = new Set();
+    // Devices asked to shut down, until the list stops calling them booted.
+    this.stopping = new Set();
     this.repairing = null;
     this.view = props()?.frames ?? claimPaneSlot();
     this.frames = frameFiles(this.view);
@@ -186,7 +199,11 @@ export default class Simulator extends View {
     this.session = null;
     this.socket = null;
     this.closed = false;
+    // { level, max } of the device's media volume, when it can be read (Android).
+    this.volume = null;
     cx.spawn((cx) => this.run(cx));
+    // The volume can change on the device itself too.
+    cx.timer.every(5000, (cx) => { if (this.phase.kind === "live") this.readVolume(cx); });
     cx.spawn(async (cx) => {
       for (;;) {
         if ((await nextCommand()) === "focus") this.focus.focus();
@@ -236,6 +253,22 @@ export default class Simulator extends View {
     }
   }
 
+  // Stop: the stream ends first so nothing restarts it, then the device shuts down.
+  // Picking it again boots it.
+  async stop(device, cx) {
+    if (this.stopping.has(device.id)) return;
+    this.stopping.add(device.id);
+    this.socket?.close();
+    this.set({ kind: "stopping", device }, cx);
+    try {
+      await this.release(true);
+      await platformOf(device).stop(device);
+    } catch (e) {
+      this.stopping.delete(device.id);
+      this.set({ kind: "error", device, message: String(e.message ?? e) }, cx);
+    }
+  }
+
   repairInput(device) {
     this.picking = false;
     this.repairing = device.id;
@@ -249,7 +282,7 @@ export default class Simulator extends View {
     if (this.view !== "panel") return false;
     const root = layout();
     const panel = findNode(root, "panel");
-    return !panel || panel.hidden || findNode(root, "panel-body")?.active !== "herdr-sim";
+    return !panel || panel.hidden || findNode(root, "panel-body")?.active !== "herdr-emulator";
   }
 
   async run(cx) {
@@ -268,6 +301,14 @@ export default class Simulator extends View {
           this.set({ kind: "no-device" }, cx);
           await sleep(cx, 2000);
           continue;
+        }
+        if (this.stopping.has(device.id)) {
+          if (device.booted) {
+            this.set({ kind: "stopping", device }, cx);
+            await sleep(cx, 500);
+            continue;
+          }
+          this.stopping.delete(device.id);
         }
         if (!device.booted) {
           this.set({ kind: this.booting.has(device.id) ? "booting" : "shutdown", device }, cx);
@@ -292,6 +333,7 @@ export default class Simulator extends View {
           this.session = await platform.start(device);
         }
         this.paused = false;
+        this.readVolume(cx);
         await this.stream(cx);
       } catch (e) {
         if (this.closed) return;
@@ -315,7 +357,7 @@ export default class Simulator extends View {
     read: for (;;) {
       // A read on a socket closed here (a pick, a repair) ends the stream like EOF.
       const chunk = await socket.read(1 << 16).catch(() => null);
-      if (chunk == null || this.closed || this.repairing || this.target()?.id !== device.id) break;
+      if (chunk == null || this.closed || this.repairing || this.stopping.has(device.id) || this.target()?.id !== device.id) break;
       if (len + chunk.length > buf.length) {
         const grown = new Uint8Array((len + chunk.length) * 2);
         grown.set(buf.subarray(0, len));
@@ -335,7 +377,10 @@ export default class Simulator extends View {
           if (this.hidden()) break read;
           due = Math.max(due, now - FRAME_MS) + FRAME_MS;
           const frame = buf.slice(start, end);
-          this.aspect = imageAspect(frame) ?? this.aspect;
+          const aspect = imageAspect(frame) ?? this.aspect;
+          // The frame turned: the device did, so read its rotations for touches again.
+          if ((aspect > 1) !== (this.aspect > 1)) this.session?.input.orient?.();
+          this.aspect = aspect;
           const slot = this.next;
           this.next = (slot + 1) % RING;
           await writeFile(`${appHome()}/${this.frames[slot]}`, frame);
@@ -348,6 +393,27 @@ export default class Simulator extends View {
     }
     socket.close();
     this.socket = null;
+  }
+
+  async readVolume(cx) {
+    const read = await this.session?.input.volume?.().catch(() => null);
+    const next = read ?? null;
+    if (next?.level === this.volume?.level && next?.max === this.volume?.max) return;
+    this.volume = next;
+    cx.notify();
+  }
+
+  // Muted, low, mid or high, as the speaker icon shows it.
+  volumeIcon() {
+    const v = this.volume;
+    if (!v || !v.max) return "volume-2";
+    if (v.level === 0) return "volume-x";
+    return v.level <= v.max / 3 ? "volume" : v.level <= (2 * v.max) / 3 ? "volume-1" : "volume-2";
+  }
+
+  volumeTip(tip) {
+    const v = this.volume;
+    return v ? `Volume ${v.level === 0 ? "muted" : `${v.level}/${v.max}`}: ${tip}` : `Volume: ${tip}`;
   }
 
   promote(slot, cx) {
@@ -393,6 +459,7 @@ export default class Simulator extends View {
       case "starting": return p.device ? `Connecting to ${p.device.name}…` : "Starting…";
       case "repairing": return `Repairing input on ${p.device.name}. SpringBoard restarts and apps close.`;
       case "booting": return `Booting ${p.device.name}…`;
+      case "stopping": return `Stopping ${p.device.name}…`;
       case "shutdown": return `${p.device.name} is shut down. Pick it again to boot it.`;
       case "no-device": return "Pick a device above";
       case "error": return p.message;
@@ -402,7 +469,7 @@ export default class Simulator extends View {
   selector(t) {
     const device = this.phase.device ?? this.target();
     const status = this.phase.kind === "live" ? t.ansi2 : this.phase.kind === "error" ? t.blocked : t.dim;
-    return h_flex().id("simulator-select").h(HEADER - 8).px(10).gap(8).items_center().rounded(8)
+    return h_flex().id("simulator-select").flex_1().min_w(0).h(ROW).px(8).gap(6).items_center().rounded(8)
       .border(1).border_color(t.border).bg(t.surface).cursor_pointer()
       .hover((el) => el.border_color(t.input))
       .on_click((_e, cx) => {
@@ -412,7 +479,7 @@ export default class Simulator extends View {
       })
       .child(svg(`${ICONS}/circle-check.svg`).size(15).flex_none().text_color(status))
       .child(div().flex_1().min_w(0).truncate().text_center().text_size(13).text_color(device ? t.foreground : t.muted)
-        .child(device ? `${device.name} • ${device.os}` : "Select device"))
+        .child(device ? `${device.name} • ${device.os.replace(/^Android /, "")}` : "Select device"))
       .child(svg(`${ICONS}/chevrons-up-down.svg`).size(14).flex_none().text_color(t.dim));
   }
 
@@ -446,26 +513,66 @@ export default class Simulator extends View {
         .child(div().flex_1().truncate().text_size(13).text_color(t.foreground).child("Repair input"))
         .child(div().text_size(11).text_color(t.dim).child("restarts SpringBoard")),
     ];
-    return v_flex().id("simulator-menu").absolute().top(HEADER + PAD - 4).left(PAD).right(PAD).pb(4)
+    return v_flex().id("simulator-menu").absolute().top(ROW + PAD + 4).left(PAD).right(PAD).pb(4)
       .rounded(8).border(1).border_color(t.border).bg(t.popover).shadow_md()
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-      .children(rows.length ? rows : [div().p(10).text_size(12).text_color(t.dim).child("No simulators or emulators. Create one in Xcode or Android Studio.")])
+      .children(rows.length ? rows : [div().p(10).text_size(12).text_color(t.dim).child("No simulators or emulators. Create one in Android Studio.")])
       .when(repair, (el) => el.children(repair));
   }
 
   toolbar(t) {
     const live = this.phase.kind === "live";
-    return h_flex().h(TOOLBAR).flex_none().items_center().justify_end().gap(2)
-      .children(BUTTONS.filter((b) => !b.only || b.only === this.phase.device?.platform).map((b) => this.tool(t, b.id, b.icon, b.tip, live, (cx) => {
-        const input = this.session?.input;
-        if (input) cx.spawn(() => b.press(input));
-      })));
+    const device = this.phase.device;
+    const running = device && this.devices.find((d) => d.id === device.id)?.booted && !this.stopping.has(device.id);
+    return h_flex().h(ROW).flex_none().items_center().gap(2)
+      .child(this.tool(t, "stop", "power", running ? `Stop ${device.name}` : "Stop", Boolean(running), (cx) => {
+        cx.spawn((cx) => this.stop(device, cx));
+      }, t.ansi1))
+      .child(div().w(2).flex_none())
+      .child(this.selector(t))
+      .child(div().w(2).flex_none())
+      .children(BUTTONS.filter((b) => !b.only || b.only === this.phase.device?.platform).map((b) => {
+        const press = (key, cx) => {
+          const input = this.session?.input;
+          if (!input) return;
+          cx.spawn(async (cx) => {
+            await key(input);
+            if (b.lower) await this.readVolume(cx);
+          });
+        };
+        // Volume and Rotate show the device's state: the volume's level, and a phone drawn
+        // the way the device is held now, its arrow turning it the other way.
+        const landscape = this.aspect > 1;
+        const icon = b.lower ? this.volumeIcon() : b.id === "rotate" ? (landscape ? "phone-landscape" : "phone-portrait") : b.icon;
+        const tip = b.lower ? this.volumeTip(b.tip) : b.id === "rotate" ? (landscape ? "Rotate to portrait" : "Rotate to landscape") : b.tip;
+        const tool = this.tool(t, b.id, icon, tip, live, (cx) => press(b.press, cx));
+        if (!b.lower || !live) return tool;
+        return tool
+          .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); press(b.lower, cx); })
+          .on_scroll_wheel((e, cx) => {
+            const step = this.wheelSteps(e);
+            for (let i = 0; i < Math.abs(step); i++) press(step > 0 ? b.press : b.lower, cx);
+          });
+      }));
   }
 
-  tool(t, id, icon, tip, enabled, action) {
+  // Wheel notches as whole steps: a mouse reports lines, a touchpad many small pixel
+  // moves, about 20px a step. Positive is up.
+  wheelSteps(e) {
+    if (e.delta_lines) return Math.sign(e.delta_lines.y);
+    const now = Date.now();
+    if (!this.wheel || now - this.wheel.at > 250 || e.delta.y * this.wheel.acc < 0) this.wheel = { acc: 0 };
+    this.wheel.at = now;
+    this.wheel.acc += e.delta.y;
+    const steps = Math.trunc(this.wheel.acc / 20);
+    this.wheel.acc -= steps * 20;
+    return steps;
+  }
+
+  tool(t, id, icon, tip, enabled, action, hoverColor) {
     return h_flex().id(`tool-${id}`).size(TOOLBAR - 2).flex_none().items_center().justify_center().rounded(6)
       .text_color(enabled ? t.muted : t.dim).tooltip(tip)
-      .when(enabled, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .when(enabled, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover).text_color(hoverColor ?? t.foreground))
         .on_click((_e, cx) => action(cx)))
       .when(!enabled, (el) => el.opacity(0.5))
       .child(svg(`${ICONS}/${icon}.svg`).size(14));
@@ -503,23 +610,23 @@ export default class Simulator extends View {
   render() {
     const t = theme();
     const note = this.note();
-    const maxH = this.size.height - HEADER - TOOLBAR - 4 * PAD - 2 * BEZEL - 2;
+    const maxH = this.size.height - ROW - 2 * PAD - GAP - 2 * BEZEL - 2;
     const maxW = this.size.width - 2 * PAD - 2 * BEZEL - 2;
     const screenH = Math.max(120, Math.min(maxH, maxW / this.aspect));
     const screenW = Math.round(screenH * this.aspect);
-    const radius = Math.round(screenW * 0.13);
+    // Corners from the short side, so a landscape screen keeps the phone's corners.
+    const radius = Math.round(Math.min(screenW, screenH) * 0.13);
 
     const screen = note == null
       ? this.screen(screenW, screenH, radius)
       : v_flex().w(screenW).h(screenH).rounded(radius).bg("#000000").items_center().justify_center().p(24)
           .child(div().text_size(12).text_color(t.dim).child(note));
 
-    return v_flex().id("herdr-sim").relative().size_full().p(PAD).gap(PAD)
+    return v_flex().id("herdr-emulator").relative().size_full().p(PAD).gap(GAP)
       .track_focus(this.focus)
       .on_key_down((e, cx) => this.keyDown(e, cx))
       .on_key_up((e, cx) => this.keyUp(e, cx))
       .on_size_change((size, cx) => { this.size = size; cx.notify(); })
-      .child(this.selector(t))
       .child(this.toolbar(t))
       .child(v_flex().flex_1().items_center().justify_center()
         .child(div().p(BEZEL).rounded(radius + BEZEL).bg("#1c1c1e").border(1).border_color("#3a3a3c").child(screen)))

@@ -1,6 +1,7 @@
 import { exec, appHome } from "herdr";
 
-export const SDK = 'sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}}"';
+// Linux: Android Studio puts the SDK in ~/Android/Sdk, and Herdr may start without ANDROID_HOME.
+export const SDK = 'sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"; [ -n "$sdk" ] || { [ -d "$HOME/Android/Sdk" ] && sdk="$HOME/Android/Sdk" || sdk="$HOME/Library/Android/sdk"; }';
 
 // Runs `adb -s <serial> <args...>` through sh so the SDK path resolves as in a terminal.
 const adb = (serial, args) => exec("sh", ["-c", `${SDK}; s="$1"; shift; exec "$sdk/platform-tools/adb" -s "$s" "$@"`, "sh", serial, ...args]);
@@ -32,8 +33,12 @@ export async function startAndroid(device) {
   if (!serial) throw new Error(`${device.name} has no adb connection yet`);
   const m = /(\d+)x(\d+)/.exec((await adb(serial, ["shell", "wm", "size"])).stdout);
   const size = m ? { width: Number(m[1]), height: Number(m[2]) } : { width: 1080, height: 2220 };
+  // Rotation follows the emulator, the way a phone follows how it's held.
+  await adb(serial, ["shell", "settings", "put", "system", "accelerometer_rotation", "1"]);
   const port = await startStream(serial);
-  return { device, serial, size, input: new AdbInput(serial, size), host: "127.0.0.1", port, path: "/stream" };
+  const input = new AdbInput(serial, size);
+  await input.orient();
+  return { device, serial, size, input, host: "127.0.0.1", port, path: "/stream" };
 }
 
 // About the width the panel shows the screen at on a Retina display.
@@ -52,9 +57,18 @@ async function startStream(serial) {
     'for i in $(seq 50); do sleep 0.1; nc -z 127.0.0.1 "$3" && exit 0; done',
     'exit 1',
   ].join("\n");
-  const r = await exec("sh", ["-c", script, "sh", `${appHome()}/mods/herdr-sim/android-stream.mjs`, consolePort, port, String(STREAM_WIDTH)]);
+  const r = await exec("sh", ["-c", script, "sh", `${appHome()}/mods/herdr-emulator/android-stream.mjs`, consolePort, port, String(STREAM_WIDTH)]);
   if (r.code !== 0) throw new Error("the emulator's screen stream didn't start");
   return Number(port);
+}
+
+// Native (portrait panel) point -> the display's own coordinates at rotation r, which
+// is what `input` takes; and back. Android's convention: ROTATION_90 is (y, W - x).
+function toDisplay([x, y], r, W, H) {
+  return [[x, y], [y, W - x], [W - x, H - y], [H - y, x]][r];
+}
+function fromDisplay([x, y], r, W, H) {
+  return [[x, y], [W - y, x], [W - x, H - y], [y, H - x]][r];
 }
 
 // The same surface as serve-sim's Input, over `adb shell input`. Points are 0..1.
@@ -65,6 +79,27 @@ export class AdbInput {
     this.queue = Promise.resolve();
     this.move = null;
     this.held = new Set();
+    // `turned`: how the emulator is held (the frames come this way up). `display`: how the
+    // app on screen is drawn, which differs when it locks its orientation.
+    this.turned = 0;
+    this.display = 0;
+  }
+
+  // The media volume, which the volume keys change: { level, max }, or null.
+  async volume() {
+    const r = await adb(this.serial, ["shell", "cmd", "media_session", "volume", "--stream", "3", "--get"]);
+    const m = /volume is (\d+) in range \[\d+\.\.(\d+)\]/.exec(r.stdout);
+    return m ? { level: Number(m[1]), max: Number(m[2]) } : null;
+  }
+
+  // Reads both rotations. Cheap (one dumpsys section), so it runs after every gesture.
+  async orient() {
+    const r = await adb(this.serial, ["shell", "dumpsys window displays | grep -oE 'mCurrentRotation=ROTATION_[0-9]+|mProposedRotation=-?[0-9]+'"]);
+    const display = /ROTATION_(\d+)/.exec(r.stdout);
+    const proposed = /mProposedRotation=(-?\d+)/.exec(r.stdout);
+    if (display) this.display = Number(display[1]) / 90;
+    // No sensor reading yet: the emulator is held the way the display is drawn.
+    this.turned = proposed && Number(proposed[1]) >= 0 ? Number(proposed[1]) : this.display;
   }
 
   // Commands run one at a time, in order. Input is fire-and-forget, so a failure is logged.
@@ -77,8 +112,13 @@ export class AdbInput {
     return this.run(() => adb(this.serial, ["shell", ...args]));
   }
 
+  // A point on the frame -> the panel -> the display's coordinates.
   px(p) {
-    return [String(Math.round(p.x * (this.size.width - 1))), String(Math.round(p.y * (this.size.height - 1)))];
+    const { width: W, height: H } = this.size;
+    const odd = this.turned % 2 === 1;
+    const frame = [p.x * ((odd ? H : W) - 1), p.y * ((odd ? W : H) - 1)];
+    const [x, y] = toDisplay(fromDisplay(frame, this.turned, W - 1, H - 1), this.display, W - 1, H - 1);
+    return [String(Math.round(x)), String(Math.round(y))];
   }
 
   // Moves that pile up behind a slow command collapse into the latest one.
@@ -94,7 +134,10 @@ export class AdbInput {
       });
     }
     this.move = null;
-    return this.shell(["input", "motionevent", type === "begin" ? "DOWN" : "UP", ...this.px(p)]);
+    const sent = this.shell(["input", "motionevent", type === "begin" ? "DOWN" : "UP", ...this.px(p)]);
+    // A tap can open an app that draws another way up.
+    if (type === "end") this.run(() => this.orient());
+    return sent;
   }
 
   key(type, usage) {
@@ -120,9 +163,19 @@ export class AdbInput {
     return this.shell(["input", "swipe", ...this.px(p), ...this.px(to), "120"]);
   }
 
+  // Turns the emulator itself, as turning the phone in your hand: the frames come the
+  // new way up, and apps that allow it rotate with it. Then the rotations are read again
+  // once Android has caught up.
+  // Each `emu rotate` turns it a quarter the same way (0, 3, 2, 1), so a press goes from
+  // portrait to landscape, and from any other way up straight back to portrait.
   rotate() {
-    // adb joins shell arguments into one command line, so this goes as one string.
-    return this.shell(["settings put system accelerometer_rotation 0; r=$(settings get system user_rotation); settings put system user_rotation $(( (${r:-0} + 1) % 4 ))"]);
+    return this.run(async () => {
+      await this.orient();
+      const steps = this.turned === 0 ? 1 : this.turned;
+      for (let i = 0; i < steps; i++) await adb(this.serial, ["emu", "rotate"]);
+      await adb(this.serial, ["shell", "settings put system accelerometer_rotation 1; sleep 0.8"]);
+      await this.orient();
+    });
   }
 
   close() {}
