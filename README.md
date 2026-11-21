@@ -92,6 +92,18 @@ Changes from [wobsoriano/herdr-sim](https://github.com/wobsoriano/herdr-sim):
 - **More room for the screen.** One 32px row for the picker and buttons, thinner padding and bezel, and a 410px panel.
 - **Tab bar rebuilt** from Herdr 0.1.16's, so tab titles and wheel scrolling match current Herdr.
 
+## Working on it
+
+Make changes in this repo, then copy them into Herdr, which reloads them:
+
+```sh
+./sync.sh          # repo -> Herdr, then herdr-app check each mod
+./sync.sh --pull   # Herdr -> repo, for a change made in Herdr's copy
+./sync.sh --dry    # show what would change, change nothing
+```
+
+It never touches the files Herdr writes into each mod folder or the screen frames.
+
 ## License
 
 MIT, see [LICENSE](LICENSE). The tab bar in `mods/tabs-herdr-simulator` is adapted from Herdr's own and keeps Herdr's Apache-2.0 license, in `mods/tabs-herdr-simulator/LICENSE`. The icons are from [Lucide](https://lucide.dev) under the ISC license, except the Android icon and the two phone icons for Rotate, which were drawn for this mod in Lucide's style.
