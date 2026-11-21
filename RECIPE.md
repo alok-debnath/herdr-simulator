@@ -124,17 +124,28 @@ Android works on Linux and macOS; iOS needs macOS.
   - **Android SDK**: `sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"`, else
     `~/Android/Sdk` if it exists, else `~/Library/Android/sdk`. Herdr started
     from a desktop launcher often has no `ANDROID_HOME`.
-  - **Android input**: `adb shell input motionevent DOWN/MOVE/UP` (moves
-    coalesced), `keyevent`, `keycombination` for Shift, `swipe` for the wheel.
-    Points go frame → panel → display: `turned` is `mProposedRotation` (how
-    the emulator is held, which is how the frames come) and `display` is
-    `mCurrentRotation` (how the app on screen is drawn), both from one
-    `dumpsys window displays | grep` (~16 ms), read when the session starts,
-    after every touch end, after a rotation, and when the frame's aspect flips.
-    A frame point is turned back to the native portrait panel by `turned`,
-    then into display coordinates by `display`, Android's convention
-    (`ROTATION_90` is `(y, W - x)`), so taps land in portrait-locked apps on a
-    landscape device too.
+  - **Android input** goes through the frame helper, not `adb`: the mod opens
+    a second connection to the helper's port that starts with `INPUT\n` and
+    writes one JSON line per event; the helper turns each into a gRPC call on
+    the connection it already holds (~0.3 ms, against ~16 ms for a new
+    `adb shell input` process):
+    `{"t":"touch","x","y","p":1|0,"moving"}` → `sendTouch` (TouchEvent with one
+    Touch, identifier 0, pressure 1 down/moving, 0 up);
+    `{"t":"key","e":0|1,"k":usage}` → `sendKey` (codeType Usb, keyCode
+    `0x070000 | usage`: bare usages are ignored); every key goes, modifiers
+    included, so Shift, Ctrl and Alt combinations reach the device;
+    `{"t":"scroll","x0","y0","x1","y1","w","h"}` → a one-finger drag that
+    moves by each wheel step and lifts after 100 ms of quiet, so lists scroll
+    and fling as under a finger. Commands run in order, and a move waiting
+    behind another is replaced by the newer one. Points are in the **native
+    portrait panel's** pixels: the emulator turns them for a rotated device,
+    and Android handles apps drawn another way up. A frame point is turned
+    back to the panel by `turned` (`mProposedRotation`, how the emulator is
+    held, which is how the frames come), from one `dumpsys window displays |
+    grep` (~16 ms) read when the session starts, after a rotation and when
+    the frame's aspect flips. If the input connection fails, input falls back
+    to `adb shell input motionevent` / `keyevent` / `swipe` in display
+    coordinates (also mapped through `mCurrentRotation`, read after each touch).
   - **Android frames**: `android-stream.mjs` calls
     `EmulatorController/streamScreenshot` on the emulator's gRPC port with
     `node:http2` (ImageFormat PNG, width and height both `round(540 × 20 / 9)`
@@ -228,6 +239,9 @@ Android works on Linux and macOS; iOS needs macOS.
   phone-shaped corners, and back to portrait on the next press; its icon
   follows. A tap on a landscape app and on the sideways home screen both
   open what's under the pointer.
+- On Android the helper holds two connections from Herdr per view (frames
+  and `INPUT`); a tap opens what's under it, typing `hello` then Shift+`w`
+  types `helloW` in a text field, and the wheel scrolls a list.
 - Volume's icon matches the device's level (set it with `cmd media_session
   volume --stream 3 --set N` and it follows within 5 seconds).
 - Stop shuts the device down and the view says so; picking it again boots it.

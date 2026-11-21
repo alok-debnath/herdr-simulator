@@ -1,4 +1,5 @@
 import { exec, appHome } from "herdr";
+import net from "net";
 
 // Linux: Android Studio puts the SDK in ~/Android/Sdk, and Herdr may start without ANDROID_HOME.
 export const SDK = 'sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"; [ -n "$sdk" ] || { [ -d "$HOME/Android/Sdk" ] && sdk="$HOME/Android/Sdk" || sdk="$HOME/Library/Android/sdk"; }';
@@ -38,6 +39,7 @@ export async function startAndroid(device) {
   const port = await startStream(serial);
   const input = new AdbInput(serial, size);
   await input.orient();
+  await input.connect(port);
   return { device, serial, size, input, host: "127.0.0.1", port, path: "/stream" };
 }
 
@@ -112,7 +114,39 @@ export class AdbInput {
     return this.run(() => adb(this.serial, ["shell", ...args]));
   }
 
-  // A point on the frame -> the panel -> the display's coordinates.
+  // Touch, keys and the wheel go to the frame helper, which hands them to the emulator
+  // over gRPC (~0.3 ms each). Without it they fall back to `adb shell input` (~16 ms).
+  async connect(port) {
+    try {
+      this.socket = await net.connect("127.0.0.1", port);
+      await this.socket.write("INPUT\n");
+    } catch {
+      this.socket = null;
+    }
+    this.sending = Promise.resolve();
+  }
+
+  // Writes go out in order; a failed write drops to the adb path from then on.
+  send(command) {
+    if (!this.socket) return false;
+    const line = `${JSON.stringify(command)}\n`;
+    this.sending = this.sending.then(() => this.socket?.write(line)).catch(() => {
+      this.socket = null;
+    });
+    return true;
+  }
+
+  // A point on the frame -> the native portrait panel, which is what the emulator's
+  // own input takes: it turns points itself for a rotated device.
+  panel(p) {
+    const { width: W, height: H } = this.size;
+    const odd = this.turned % 2 === 1;
+    const frame = [p.x * ((odd ? H : W) - 1), p.y * ((odd ? W : H) - 1)];
+    const [x, y] = fromDisplay(frame, this.turned, W - 1, H - 1);
+    return { x: Math.round(x), y: Math.round(y) };
+  }
+
+  // A point on the frame -> the panel -> the display's coordinates, for `adb shell input`.
   px(p) {
     const { width: W, height: H } = this.size;
     const odd = this.turned % 2 === 1;
@@ -123,6 +157,8 @@ export class AdbInput {
 
   // Moves that pile up behind a slow command collapse into the latest one.
   touch(type, p) {
+    const { x, y } = this.panel(p);
+    if (this.send({ t: "touch", x, y, p: type === "end" ? 0 : 1, moving: type === "move" })) return;
     if (type === "move") {
       const queued = this.move != null;
       this.move = p;
@@ -140,7 +176,10 @@ export class AdbInput {
     return sent;
   }
 
+  // Every key goes as its USB usage, modifiers included, so Shift, Ctrl and Alt
+  // combinations reach the device as typed.
   key(type, usage) {
+    if (this.send({ t: "key", e: type === "down" ? 0 : 1, k: usage })) return;
     if (MODIFIERS.has(usage)) return type === "down" ? this.held.add(usage) : this.held.delete(usage);
     const code = KEYCODES[usage];
     if (type !== "down" || code == null) return;
@@ -160,6 +199,9 @@ export class AdbInput {
   // dx, dy: a fraction of the screen; positive scrolls toward what is below / right.
   scroll(dx, dy, p) {
     const to = { x: clamp01(p.x - dx), y: clamp01(p.y - dy) };
+    const from = this.panel(p);
+    const end = this.panel(to);
+    if (this.send({ t: "scroll", x0: from.x, y0: from.y, x1: end.x, y1: end.y, w: this.size.width, h: this.size.height })) return;
     return this.shell(["input", "swipe", ...this.px(p), ...this.px(to), "120"]);
   }
 
@@ -178,7 +220,10 @@ export class AdbInput {
     });
   }
 
-  close() {}
+  close() {
+    this.socket?.close();
+    this.socket = null;
+  }
 }
 
 const clamp01 = (v) => Math.min(1, Math.max(0, v));

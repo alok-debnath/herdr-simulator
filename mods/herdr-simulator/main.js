@@ -330,6 +330,7 @@ export default class Simulator extends View {
           this.session = await platform.start(device);
         } else if (this.paused && device.platform === "android") {
           // Its frame helper exits once nothing watches; starting again reuses it if it didn't.
+          this.session.input.close();
           this.session = await platform.start(device);
         }
         this.paused = false;

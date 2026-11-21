@@ -73,7 +73,7 @@ Herdr Simulator sends nothing over the internet itself.
 
 ## Limits
 
-- The picture is about 0.12 seconds behind the device, because Herdr takes about that long to show a changed image. Taps and typing reach the device right away.
+- The picture is about 0.12 seconds behind the device, because Herdr takes about that long to show a changed image, and a mod can only show pictures from files. Taps and typing reach the device right away.
 - On Android, apps that lock themselves to portrait, the home screen among them, show sideways in landscape, as they would on a phone you turned.
 - Volume levels are shown on Android only. On iOS the button keeps one icon.
 - Tested with Herdr 0.1.16 and the Android emulator on Linux (x86_64). The iOS path is unchanged from the original, which was tested with Herdr 0.1.13 and Xcode 27.
@@ -87,7 +87,8 @@ Changes from [wobsoriano/herdr-sim](https://github.com/wobsoriano/herdr-sim):
 - **Android on Linux.** The SDK falls back to `~/Android/Sdk`, the helper finds the running emulator under `$XDG_RUNTIME_DIR/avd/running`, and iOS is only listed on macOS, so a missing `xcrun` doesn't hide the Android devices.
 - **Android frames show.** The helper used Node's `http` server, whose chunked encoding put chunk sizes inside every frame, so no frame was a valid image. It now writes the stream to the socket directly.
 - **Smoother and lighter.** A still screen sends nothing (identical frames are skipped), frames are written up to 50 times a second instead of 30, and each shows after 120 ms instead of 200.
-- **Real rotation on Android.** Rotate turns the emulator itself, so frames come the right way up and sharp both ways (540×1200 or 1200×540). Taps are mapped through both how the device is held and how the app is drawn, so they land in portrait-locked apps too.
+- **Native-speed input on Android.** Taps, drags, keys and the wheel go to the emulator over its own gRPC connection, about 0.3 ms each, instead of starting an `adb` process per event (about 16 ms). Drags follow the pointer, and Ctrl and Alt combinations reach the device.
+- **Real rotation on Android.** Rotate turns the emulator itself, so frames come the right way up and sharp both ways (540×1200 or 1200×540). Taps land where you point, in portrait-locked apps too.
 - **Stop button**, **one Volume button** with a level icon, and a **Rotate icon** that shows the orientation.
 - **More room for the screen.** One 32px row for the picker and buttons, thinner padding and bezel, and a 410px panel.
 - **Tab bar rebuilt** from Herdr 0.1.16's, so tab titles and wheel scrolling match current Herdr.

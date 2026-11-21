@@ -6,6 +6,14 @@
 // whenever the screen changes (~36 fps at 540 wide, against ~6 fps for adb
 // screencap). One gRPC stream feeds every viewer; the helper exits a few
 // seconds after the last one leaves, or when the emulator goes away.
+//
+// Input goes the same way: a connection that starts with "INPUT\n" sends one JSON
+// command per line, and each becomes a gRPC call on the emulator's own connection
+// (~0.3 ms) instead of an `adb shell input` process (~16 ms). Points are in the
+// native portrait panel's pixels; the emulator turns them for a rotated device.
+//   {"t":"touch","x":540,"y":1200,"p":1}   p 1 = down or move, 0 = up
+//   {"t":"key","e":0,"k":4}                e 0 = down, 1 = up; k a USB HID usage
+//   {"t":"scroll","x0":..,"y0":..,"x1":..,"y1":..,"w":1080,"h":2400}
 import net from "node:net";
 import http2 from "node:http2";
 import { readFileSync, readdirSync } from "node:fs";
@@ -113,6 +121,96 @@ call.on("data", (chunk) => {
 
 // One write per frame. A viewer that can't keep up skips frames instead of
 // queueing them, so it always gets the newest picture.
+// One unary gRPC call to the emulator. Resolves when it answers; input never waits
+// on the answer's contents.
+function unary(method, msg) {
+  return new Promise((resolve) => {
+    const head = Buffer.alloc(5);
+    head.writeUInt32BE(msg.length, 1);
+    const req = grpc.request({
+      ":method": "POST",
+      ":path": `/android.emulation.control.EmulatorController/${method}`,
+      "content-type": "application/grpc",
+      te: "trailers",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    });
+    req.on("data", () => {});
+    req.on("end", resolve);
+    req.on("error", resolve);
+    req.end(Buffer.concat([head, Buffer.from(msg)]));
+  });
+}
+
+const field = (number, value) => [number << 3, ...varint(Math.max(0, Math.round(value)) >>> 0)];
+const nested = (number, bytes) => [(number << 3) | 2, ...varint(bytes.length), ...bytes];
+// TouchEvent { touches: [Touch { x, y, identifier, pressure }] }; pressure 0 lifts it.
+const touch = (x, y, down) => unary("sendTouch", nested(1, [...field(1, x), ...field(2, y), ...field(3, 0), ...field(4, down ? 1 : 0)]));
+// KeyboardEvent { codeType: Usb, eventType, keyCode }. Usb codes carry the keyboard page.
+const key = (up, usage) => unary("sendKey", [...field(1, 0), ...field(2, up ? 1 : 0), ...field(3, 0x070000 | usage)]);
+
+// Commands run one at a time, in order. A move waiting behind another is replaced by
+// the newer one, so a fast drag never falls behind the pointer.
+const queue = [];
+let running = false;
+function enqueue(command) {
+  const lastQueued = queue[queue.length - 1];
+  if (command.move && lastQueued?.move) queue[queue.length - 1] = command;
+  else queue.push(command);
+  if (!running) drain();
+}
+async function drain() {
+  running = true;
+  while (queue.length) await queue.shift().run();
+  running = false;
+}
+
+// A wheel has no touch of its own: each wheel step drags one finger, which lifts
+// after a short pause, so the app scrolls (and flings) as under a finger.
+const SCROLL_IDLE_MS = 100;
+let scrolling = null;
+const clampTo = (v, max) => Math.min(max - 1, Math.max(0, v));
+function scroll(c) {
+  if (!scrolling) {
+    scrolling = { x: c.x0, y: c.y0, timer: null };
+    const { x, y } = scrolling;
+    enqueue({ run: () => touch(x, y, true) });
+  }
+  scrolling.x = clampTo(scrolling.x + (c.x1 - c.x0), c.w);
+  scrolling.y = clampTo(scrolling.y + (c.y1 - c.y0), c.h);
+  const { x, y } = scrolling;
+  enqueue({ move: true, run: () => touch(x, y, true) });
+  clearTimeout(scrolling.timer);
+  scrolling.timer = setTimeout(() => {
+    const end = scrolling;
+    scrolling = null;
+    enqueue({ run: () => touch(end.x, end.y, false) });
+  }, SCROLL_IDLE_MS);
+}
+
+function command(c) {
+  if (c.t === "touch") enqueue({ move: c.p === 1 && c.moving, run: () => touch(c.x, c.y, c.p === 1) });
+  else if (c.t === "key") enqueue({ run: () => key(c.e === 1, c.k) });
+  else if (c.t === "scroll") scroll(c);
+}
+
+function takeInput(socket, rest) {
+  let pending = rest;
+  const lines = (chunk) => {
+    pending += chunk;
+    let at;
+    while ((at = pending.indexOf("\n")) !== -1) {
+      const line = pending.slice(0, at);
+      pending = pending.slice(at + 1);
+      try {
+        if (line) command(JSON.parse(line));
+      } catch {}
+    }
+  };
+  socket.setEncoding("utf8");
+  socket.on("data", lines);
+  lines("");
+}
+
 function send(socket, png) {
   if (socket.writableLength > 0) return;
   socket.write(Buffer.concat([Buffer.from(`--frame\r\nContent-Type: image/png\r\nContent-Length: ${png.length}\r\n\r\n`), png, Buffer.from("\r\n")]));
@@ -124,8 +222,11 @@ const HEAD = "HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; bounda
 net.createServer((socket) => {
   socket.setNoDelay(true);
   socket.on("error", () => socket.destroy());
-  // Answer once the request has arrived; its contents don't matter.
-  socket.once("data", () => {
+  // Answer once the request has arrived: an input connection names itself, anything
+  // else is a viewer and gets the frames.
+  socket.once("data", (chunk) => {
+    const text = chunk.toString("utf8");
+    if (text.startsWith("INPUT\n")) return takeInput(socket, text.slice(6));
     socket.write(HEAD);
     viewers.add(socket);
     if (last) send(socket, last);
